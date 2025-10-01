@@ -1,0 +1,6 @@
+1 gb limit not being held to
+60 second isnt being honnered... although killed is working
+
+pretty sure I need to make it deal with the graph in the json file and not in memory but this is a start. 
+
+I think it gets stuck in loops
