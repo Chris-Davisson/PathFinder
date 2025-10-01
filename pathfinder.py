@@ -8,7 +8,7 @@ def load_graph(filename="example_graph.json"):
     """Loads a graph from a JSON file in node-link format."""
     with open(filename, 'r') as f:
         data = json.load(f)
-    return nx.node_link_graph(data)
+    return nx.node_link_graph(data, edges="links")
 
 def select_landmarks(G, num_landmarks):
     """Selects the first 'num_landmarks' nodes as landmarks."""
