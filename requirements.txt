@@ -1,0 +1,29 @@
+Your task, if you choose to accept it, is to generate an efficient path finder within an arbitrarily-sized graph.  You must use Python, but are free to use any existing libraries.  You do not need to implement absolutely everything from scratch.
+
+Input: A JSON file containing information on the graph.  Be able to parse any JSON created with the included graph-generator.py file.  See the included example_graph.json for the expected format.  Read this in as a command line argument.
+
+The first thing your program should do is start a 60-second timer.  Within those 60 seconds, you are to parse and store relevant information about this graph in memory so that future queries (described in the next section) are as fast and accurate as possible.  This can include the entire graph if it is small enough, calculate landmark nodes and efficient paths between them, and any other preprocessing.  Do note that you are limited to 1GB of active system memory, so do not try to store more than that.  How you keep track of that is up to you.
+
+Once you have completed your preprocessing, query the user via the command line for the relative path to a text file containing a number of lines each with two node IDs separated by a space (one pair per line).  For each of those pairs, calculate an efficient path from the first to the second.  Please note that this does NOT need to be the shortest path possible, but shorter is better.  You must determine how to trade off the path length with the amount of time the query will take.  You may consider outside factors like the size of the graph or a heuristic.  For each pair, output the length of the path found and the amount of time it took to find it.
+
+For readability, please document your code thoroughly, but do not include your name in your source files.
+
+ 
+
+Grading: Please submit your source code.
+
+Completeness: The program runs to completion on all test inputs.  50 points 
+
+Correctness: The program finds an at least somewhat reasonable path in a somewhat reasonable amount of time given the size of the graph.  This is left intentionally vague because you should be able to analyze your program and determine if there are significant speedups that can be implemented.  However, you do not need state-of-the-art speed to get full points.  40 points
+
+Documentation and readability: Every method should have a docstring with further explanation if needed.  Use a readable coding style with manageable decomposition.  No loop in a loop in an if in another loop in another loop.  10 points
+
+graph-generator.pyDownload graph-generator.py
+
+example_graph.jsonDownload example_graph.json
+
+example_graph.png
+
+ 
+
+Suggestions: For testing your memory usage, you can either run your program in a virtual machine or docker image or utilize the rlimit() family of functions from the resource library (Linux only).
