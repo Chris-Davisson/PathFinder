@@ -1,0 +1,40 @@
+Query: Find path from 0 to 5
+  - Path: 0 -> 2283 -> 438 -> 3743 -> 5026 -> 3214 -> 7241 -> 3074 -> 5
+  - Landmarks Used: 5026 (from source), 7241 (from destination)
+--------------------
+Query: Find path from 1 to 4
+  - Path: 1 -> 5666 -> 6734 -> 3120 -> 6483 -> 5507 -> 3287 -> 3017 -> 7683 -> 244 -> 7619 -> 9496 -> 4
+  - Landmarks Used: 3120 (from source), 244 (from destination)
+--------------------
+Query: Find path from 8 to 6
+  - Path: 8 -> 5185 -> 428 -> 6567 -> 3926 -> 3470 -> 3401 -> 6269 -> 7881 -> 4050 -> 3995 -> 6
+  - Landmarks Used: 6567 (from source), 4050 (from destination)
+--------------------
+Query: Find path from 9 to 5
+  - Path: 9 -> 9711 -> 3793 -> 9382 -> 5955 -> 9180 -> 251 -> 3328 -> 9889 -> 8710 -> 3214 -> 7241 -> 3074 -> 5
+  - Landmarks Used: 9382 (from source), 7241 (from destination)
+--------------------
+Query: Find path from 3 to 7
+  - Path: 3 -> 70 -> 6704 -> 4410 -> 7684 -> 7149 -> 7192 -> 2567 -> 7114 -> 3475 -> 1656 -> 3544 -> 87 -> 4975 -> 7712 -> 4975 -> 7
+  - Landmarks Used: 7684 (from source), 7712 (from destination)
+--------------------
+Query: Find path from 4 to 1
+  - Path: 4 -> 9496 -> 7619 -> 244 -> 7683 -> 3017 -> 3287 -> 5507 -> 6483 -> 3120 -> 6734 -> 5666 -> 1
+  - Landmarks Used: 244 (from source), 3120 (from destination)
+--------------------
+Query: Find path from 7 to 7
+  - Path: 7 -> 4975 -> 7712 -> 4975 -> 7
+  - Landmarks Used: 7712 (from source), 7712 (from destination)
+--------------------
+Query: Find path from 2 to 100
+  - Path: 2 -> 6676 -> 6662 -> 9382 -> 5955 -> 9180 -> 251 -> 8092 -> 4836 -> 1975 -> 8776 -> 7160 -> 6183 -> 3624 -> 100
+  - Landmarks Used: 9382 (from source), 6183 (from destination)
+--------------------
+Query: Find path from 512 to 314
+  - Path: 512 -> 2419 -> 1033 -> 9384 -> 5794 -> 8398 -> 3175 -> 8837 -> 5299 -> 2348 -> 5299 -> 394 -> 314
+  - Landmarks Used: 2419 (from source), 2348 (from destination)
+--------------------
+Query: Find path from 123 to 124
+  - Path: 123 -> 1724 -> 7671 -> 1317 -> 9343 -> 5527 -> 7839 -> 8508 -> 7897 -> 2708 -> 4507 -> 7509 -> 4778 -> 7175 -> 4715 -> 124
+  - Landmarks Used: 9343 (from source), 7175 (from destination)
+--------------------

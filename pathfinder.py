@@ -3,25 +3,38 @@ import math
 import networkx as nx
 import argparse
 import time
+import random
 
 def load_graph(filename="example_graph.json"):
     """Loads a graph from a JSON file in node-link format."""
     with open(filename, 'r') as f:
         data = json.load(f)
-    return nx.node_link_graph(data, edges="links")
+    return nx.node_link_graph(data, edges='links')
 
 def select_landmarks(G, num_landmarks):
     """Selects the first 'num_landmarks' nodes as landmarks."""
-    return list(G.nodes())[:num_landmarks]
+    nodes = list(G.nodes())
+    if num_landmarks > len(nodes):
+        num_landmarks = len(nodes)
+    return random.sample(nodes, num_landmarks)
 
 def precompute_landmark_paths(G, landmarks):
     """Precomputes and stores shortest paths between landmarks."""
     landmark_paths = {}
+    start_time = time.time()
     for i, landmark1 in enumerate(landmarks):
+        # Check timer
+        if time.time() - start_time > 60:
+            print("Precompute timer: 60 seconds exceeded, returning partial results.")
+            break
         # Limit the number of connections per landmark to sqrt(num_landmarks)
         num_connections = int(math.sqrt(len(landmarks)))
         # Connect to a subset of other landmarks
         for landmark2 in landmarks[i+1:i+1+num_connections]:
+            # Check timer inside inner loop as well
+            if time.time() - start_time > 60:
+                print("Precompute timer: 60 seconds exceeded, returning partial results.")
+                return landmark_paths
             try:
                 path = nx.dijkstra_path(G, landmark1, landmark2, weight='weight')
                 if landmark1 not in landmark_paths:
@@ -53,13 +66,13 @@ def find_closest_landmark(G, node, landmarks):
 
 
 def find_path_with_landmarks(G, source, dest, landmarks, landmark_paths):
-    """Finds a path from source to destination using landmarks."""
+    """Finds a path from source to destination using landmarks and returns the path and landmarks used."""
     # Find paths to the nearest landmarks for both source and destination
     source_landmark, path_to_source_landmark = find_closest_landmark(G, source, landmarks)
     dest_landmark, path_to_dest_landmark = find_closest_landmark(G, dest, landmarks)
 
     if source_landmark is None or dest_landmark is None:
-        return None  # No path to a landmark
+        return None, None, None  # No path to a landmark
 
     # Check for direct path between the landmarks in our precomputed table
     # and handle both directions
@@ -75,43 +88,33 @@ def find_path_with_landmarks(G, source, dest, landmarks, landmark_paths):
         try:
             landmark_path = nx.dijkstra_path(G, source_landmark, dest_landmark, weight='weight')
         except nx.NetworkXNoPath:
-            return None # No path between landmarks
+            return None, source_landmark, dest_landmark # No path between landmarks
 
     # Combine the paths
-    # path_to_source_landmark is from source to landmark
-    # landmark_path is from source_landmark to dest_landmark
-    # path_to_dest_landmark needs to be reversed to go from landmark to dest
     full_path = path_to_source_landmark[:-1] + landmark_path + list(reversed(path_to_dest_landmark))[1:]
 
-    return full_path
+    return full_path, source_landmark, dest_landmark
 
-def process_queries(G, landmarks, landmark_paths, query_file=False):
-    """Processes pathfinding queries from a file."""
+def process_queries(G, landmarks, landmark_paths, query_file=False, output_file="paths_output.txt"):
+    """Processes pathfinding queries and writes the full path and landmarks used to a file."""
     if not query_file:
-        # get user input
         query_file = input("Enter query file path: ")
 
-    with open(query_file, 'r') as f:
-        for line in f:
+    with open(query_file, 'r') as f_in, open(output_file, 'w') as f_out:
+        for line in f_in:
             source, dest = map(int, line.strip().split())
-            print(f"Query: Find path from {source} to {dest}")
+            
+            path, source_lm, dest_lm = find_path_with_landmarks(G, source, dest, landmarks, landmark_paths)
 
-            # Using standard Dijkstra for comparison
-            try:
-                dijkstra_path = nx.dijkstra_path(G, source, dest, weight='weight')
-                print(f"  - Dijkstra's Algorithm Path Length: {len(dijkstra_path) - 1}")
-            except nx.NetworkXNoPath:
-                print("  - Dijkstra's Algorithm: No path found.")
-
-
-            # Using our landmark-based algorithm
-            landmark_based_path = find_path_with_landmarks(G, source, dest, landmarks, landmark_paths)
-
-            if landmark_based_path:
-                print(f"  - Landmark-based Path Length: {len(landmark_based_path) - 1}")
+            f_out.write(f"Query: Find path from {source} to {dest}\n")
+            if path:
+                path_str = " -> ".join(map(str, path))
+                f_out.write(f"  - Path: {path_str}\n")
+                f_out.write(f"  - Landmarks Used: {source_lm} (from source), {dest_lm} (from destination)\n")
             else:
-                print("  - Landmark-based method: No path found.")
-            print("-" * 20)
+                f_out.write("  - No path found.\n")
+            f_out.write("-" * 20 + "\n")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Pathfinder")
@@ -133,8 +136,10 @@ def main():
     landmark_paths = precompute_landmark_paths(G, landmarks)
     print("Path pre-computation complete.")
 
-    # Process queries
-    process_queries(G, landmarks, landmark_paths , args.q)
+    # Process queries and save to file
+    print("Processing queries and saving paths to paths_output.txt...")
+    process_queries(G, landmarks, landmark_paths, args.q)
+    print("Done. Check paths_output.txt for results.")
 
 if __name__ == "__main__":
     main()
