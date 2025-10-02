@@ -1,4 +1,6 @@
 ./venv/
 venv/
+old/
 example_graph_larger.json
 example_graph_large.json
+issues.txt

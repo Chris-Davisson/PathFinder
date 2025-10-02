@@ -1,0 +1,62 @@
+Developer: # Efficient Graph Path Finder - Developer Guidelines
+
+## Role and Objective
+Develop a Python tool to efficiently process and query paths within arbitrarily-sized graphs, utilizing preprocessing and established libraries for optimal performance.
+
+Begin with a concise checklist (3-7 bullets) of the major subtasks you will complete; keep this conceptual. Example: (1) parse input graph, (2) preprocess for efficient querying, (3) enforce memory limits, (4) process query pairs, (5) compute and output path info, (6) handle errors robustly.
+
+## Instructions
+- Accept input as a JSON graph file (provided as a command line argument), compatible with files output by `graph-generator.py` (see `example_graph.json` for structure).
+- Upon execution, start a 60-second timer dedicated to parsing the graph file and preparing internal data structures for path computation. Example preprocessing tasks: loading the graph (if feasible), detecting landmark nodes, precomputing path shortcuts, or other reasonable optimizations.
+- Strictly enforce a maximum active memory usage of 1GB throughout execution. Choose and document your platform-appropriate enforcement method.
+
+### Processing Phase
+- After preprocessing, prompt for the relative path to a text file containing node-pair queries (one per line, IDs separated by a space).
+- For each node pair from this file:
+    - Compute an efficient (not necessarily shortest) path from the first to the second node, favoring shorter paths with balanced tradeoffs for performance.
+    - Output, per query:
+        - The length of the path
+        - The path as an ordered list of node IDs
+        - Query computation time (seconds, include decimals)
+- For any query where no path exists, or if inputs are malformed, print a clear error to stderr as appropriate. Then:
+    - Skip to the next query if recovery is possible
+    - Terminate if the error is unrecoverable (e.g., unparseable files or invalid format)
+
+After code edits or test runs, validate outcomes in 1-2 lines and proceed or self-correct if validation fails.
+
+## Code Quality Requirements
+- All code must be thoroughly documented for readability.
+  - Every method must include a descriptive docstring
+  - Use inline comments to clarify critical logic
+- Never include your name in any code or output files.
+- Organize code for clarity and maintainability; avoid deep nesting in loops or conditionals.
+
+## Grading Criteria
+- **Completeness (50 points):** Successfully executes and produces specified outputs on all test inputs.
+- **Correctness (40 points):** Provides efficient, sensible path-finding solutions. State-of-the-art performance is not required.
+- **Documentation & Readability (10 points):** Code is clear, well-documented, and modular.
+
+## Suggestions
+- To test or explore memory usage limits, use a virtual machine, Docker container, or leverage `rlimit()` from the `resource` module (Linux systems).
+
+## Output Format
+For each queried node pair, write to stdout a single CSV-formatted line:
+
+```
+<start_node_id>,<end_node_id>,<path_length>,<computation_time_seconds>,<path_sequence>
+```
+Where:
+- `<start_node_id>`: Starting node ID
+- `<end_node_id>`: Ending node ID
+- `<path_length>`: Number of edges in the path, or `-1` if no path found
+- `<computation_time_seconds>`: Time in seconds to compute the query (may include decimals)
+- `<path_sequence>`: Node IDs in order, separated by semicolons (blank if no path)
+
+Example output:
+```
+A,B,3,0.012,A;C;D;B
+C,G,-1,0.005,
+```
+
+- If the query file is unparseable or otherwise invalid, print an error to stderr and exit with a non-zero exit code.
+- For any unresolved node pairs, use `-1` as the `path_length` and leave the `path_sequence` column blank.
