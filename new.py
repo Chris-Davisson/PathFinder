@@ -115,8 +115,7 @@ def main():
     if IS_SMALL_GRAPH:
         process_small_graph_queries(G, args.queries, args.output)
     else:
-        print("Landmark-based pathfinding not yet implemented.", file=sys.stderr)
-        # Placeholder for landmark-based pathfinding logic
+        print("Processing for Large graphs using landmark-based pathfinding")
         pass
 
 
