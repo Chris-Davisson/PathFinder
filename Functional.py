@@ -90,56 +90,56 @@ def bounded_dijkstra(graph, start_node, end_node=None, targets=None, max_expansi
 
 
 # --- Graph Loading ---
-# This works but changes need to be made and first then reimplemented
-# def load_graph_streaming(path):
-#     """
-#     Loads a graph from a large JSON file using a streaming parser (ijson).
+
+def load_graph_streaming(path):
+    """
+    Loads a graph from a large JSON file using a streaming parser (ijson).
     
-#     This function periodically checks the global deadline and will return a
-#     partially loaded graph if the deadline is exceeded.
+    This function periodically checks the global deadline and will return a
+    partially loaded graph if the deadline is exceeded.
 
-#     Args:
-#         path (str): The path to the node-link JSON graph file.
+    Args:
+        path (str): The path to the node-link JSON graph file.
 
-#     Returns:
-#         nx.Graph: The loaded graph, which may be partial if the deadline was hit.
-#     """
-#     print(f"INFO: File is large. Using streaming loader for {path}...", file=sys.stderr)
-#     graph = nx.Graph()
-#     current_object_type = None
-#     node_count, link_count = 0, 0
+    Returns:
+        nx.Graph: The loaded graph, which may be partial if the deadline was hit.
+    """
+    print(f"INFO: File is large. Using streaming loader for {path}...", file=sys.stderr)
+    graph = nx.Graph()
+    current_object_type = None
+    node_count, link_count = 0, 0
 
-#     with open(path, 'rb') as f:
-#         try:
-#             parser = ijson.parse(f)
-#             for prefix, event, value in parser:
-#                 if (node_count + link_count) % 10000 == 0 and deadline_reached():
-#                     print(f"WARNING: Global deadline reached during streaming. Loaded {node_count} nodes and {link_count} links.", file=sys.stderr)
-#                     return graph
+    with open(path, 'rb') as f:
+        try:
+            parser = ijson.parse(f)
+            for prefix, event, value in parser:
+                if (node_count + link_count) % 10000 == 0 and deadline_reached():
+                    print(f"WARNING: Global deadline reached during streaming. Loaded {node_count} nodes and {link_count} links.", file=sys.stderr)
+                    return graph
 
-#                 if prefix == 'nodes' and event == 'start_array':
-#                     current_object_type = 'nodes'
-#                 elif prefix == 'links' and event == 'start_array':
-#                     current_object_type = 'links'
-#                 elif '.id' in prefix and current_object_type == 'nodes':
-#                     graph.add_node(value)
-#                     node_count += 1
-#                 elif prefix.endswith('.source'):
-#                     source = value
-#                 elif prefix.endswith('.target'):
-#                     target = value
-#                 elif prefix.endswith('.weight'):
-#                     weight = float(value)
-#                     graph.add_edge(source, target, weight=weight)
-#                     link_count += 1
-#                 elif event == 'end_map' and current_object_type == 'links' and 'weight' not in graph[source][target]:
-#                     graph.add_edge(source, target, weight=1.0)
-#                     link_count += 1
-#         except ijson.JSONError as e:
-#             print(f"ERROR: Failed to parse JSON stream: {e}", file=sys.stderr)
+                if prefix == 'nodes' and event == 'start_array':
+                    current_object_type = 'nodes'
+                elif prefix == 'links' and event == 'start_array':
+                    current_object_type = 'links'
+                elif '.id' in prefix and current_object_type == 'nodes':
+                    graph.add_node(value)
+                    node_count += 1
+                elif prefix.endswith('.source'):
+                    source = value
+                elif prefix.endswith('.target'):
+                    target = value
+                elif prefix.endswith('.weight'):
+                    weight = float(value)
+                    graph.add_edge(source, target, weight=weight)
+                    link_count += 1
+                elif event == 'end_map' and current_object_type == 'links' and 'weight' not in graph[source][target]:
+                    graph.add_edge(source, target, weight=1.0)
+                    link_count += 1
+        except ijson.JSONError as e:
+            print(f"ERROR: Failed to parse JSON stream: {e}", file=sys.stderr)
 
-#     print(f"INFO: Streaming load complete. Loaded {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.", file=sys.stderr)
-#     return graph
+    print(f"INFO: Streaming load complete. Loaded {graph.number_of_nodes()} nodes and {graph.number_of_edges()} edges.", file=sys.stderr)
+    return graph
 
 def load_graph(path):
     """
