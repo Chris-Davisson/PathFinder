@@ -9650,3 +9650,506 @@ ChatGPT said:
 "All functions have docstrings and code is readable."
 ]
 }
+
+
+
+
+For very large graphs add the ability to scan the json to find connections to make sub graphs. This can include loading pieces or line by line. Here is my current attempt
+
+import argparse
+import time
+import math
+import random
+import heapq
+import sys
+import os
+import json
+import networkx as nx
+import signal
+import psutil
+import ijson
+
+--- Global Configuration & Timers ---
+PROGRAM_START = time.monotonic()
+GLOBAL_DEADLINE_SECONDS = 60.0
+SIZE_THRESHOLD_BYTES = 100 * 1024 * 1024 # 100 MB
+HUGE_GRAPH_THRESHOLD_BYTES = 250 * 1024 * 1024 # 250 MB
+IS_SMALL_GRAPH = None
+LIMIT = 1 << 30 # 1 GiB
+
+--- Custom Exception for Timeout ---
+class TimeoutInterrupt(Exception):
+"""Custom exception for deadline interrupts."""
+pass
+
+def limit():
+"""Enforce 1 GiB process memory cap."""
+rss = psutil.Process(os.getpid()).memory_info().rss
+if rss > LIMIT:
+sys.stderr.write(f"\nERROR: Memory limit exceeded ({rss / (1<<30):.2f} GiB > {LIMIT / (1<<30):.2f} GiB).\n")
+sys.exit(137)
+
+--- Signal Handler ---
+def deadline_handler(signum, frame):
+"""This function is called when the alarm signal is received."""
+print("INTERRUPT: Global deadline reached. Stopping preprocessing.", file=sys.stderr)
+raise TimeoutInterrupt
+
+--- Graph Loading & On-Disk Subgraph Functions ---
+def load_graph_streaming(path):
+"""Loads a large graph using a streaming parser to save memory."""
+print("INFO: Using streaming loader for large graph...", file=sys.stderr)
+G = nx.Graph()
+with open(path, 'rb') as f:
+links = ijson.items(f, 'links.item')
+for link in links:
+source = link['source']
+target = link['target']
+weight = float(link.get('weight', 1.0))
+G.add_edge(source, target, weight=weight)
+return G
+
+def get_max_node_id(path):
+"""Scans the JSON to find the max node ID without loading it all."""
+print("INFO: Scanning file to determine node range for landmark guessing...", file=sys.stderr)
+max_id = -1
+with open(path, 'rb') as f:
+# Using a low-level parser for speed to find the max node ID.
+parser = ijson.parse(f)
+for prefix, event, value in parser:
+if prefix == 'nodes.item.id':
+if value > max_id:
+max_id = value
+print(f"INFO: Max node ID found: {max_id}", file=sys.stderr)
+return max_id
+
+def build_subgraph_for_node(path, node_id):
+"""Builds a subgraph for a single node by streaming the entire file."""
+subgraph = nx.Graph()
+with open(path, 'rb') as f:
+links = ijson.items(f, 'links.item')
+for link in links:
+source, target = link['source'], link['target']
+if source == node_id or target == node_id:
+weight = float(link.get('weight', 1.0))
+subgraph.add_edge(source, target, weight=weight)
+return subgraph
+
+def build_unified_subgraph_on_disk(path, num_landmarks_to_build):
+"""
+Builds a single, connected subgraph by starting with a seed landmark
+and expanding from the frontier of the already-built graph.
+"""
+G = nx.Graph()
+max_node = get_max_node_id(path)
+if max_node == -1:
+print("ERROR: Could not find any nodes in the graph file.", file=sys.stderr)
+return G
+
+# 1. Start with a single random landmark to seed the graph
+start_landmark = random.randint(0, max_node)
+print(f"INFO: Building unified subgraph. Starting with seed landmark: {start_landmark}", file=sys.stderr)
+G = build_subgraph_for_node(path, start_landmark)
+
+# 2. Iteratively expand from the frontier
+for i in range(1, num_landmarks_to_build):
+    # The frontier is the set of nodes at the edge of our current graph
+    if not G:
+        print("WARNING: Initial subgraph is empty, cannot expand further.", file=sys.stderr)
+        break
+        
+    frontier = list(G.nodes()) # In this simple model, any node can be a new landmark
+    if not frontier:
+         print("WARNING: No nodes in graph to pick new landmark from.", file=sys.stderr)
+         break
+
+    next_landmark = random.choice(frontier)
+    print(f"  -> Expanding from new landmark {i+1}/{num_landmarks_to_build} (Node {next_landmark})...", file=sys.stderr)
+    
+    subgraph = build_subgraph_for_node(path, next_landmark)
+    G = nx.compose(G, subgraph)
+
+return G
+--- Core Pathfinding Algorithm ---
+def bounded_dijkstra(graph, start_node, end_node=None, targets=None, max_expansions=20000, time_budget=1.5):
+"""Performs a Dijkstra search with limits on node expansions and execution time."""
+if start_node not in graph:
+return None, float('inf'), "start_node_missing"
+
+search_start_time = time.monotonic()
+pq = [(0, start_node)]
+distances = {start_node: 0}
+parents = {start_node: None}
+expansions = 0
+
+target_set = set(targets) if targets else set()
+if end_node:
+    target_set.add(end_node)
+
+while pq and expansions < max_expansions:
+    if time.monotonic() - search_start_time > time_budget:
+        return None, float('inf'), "timeout"
+
+    cost, current_node = heapq.heappop(pq)
+    expansions += 1
+
+    if cost > distances.get(current_node, float('inf')):
+        continue
+
+    if current_node in target_set:
+        path = []
+        node = current_node
+        while node is not None:
+            path.append(node)
+            node = parents.get(node)
+        return path[::-1], cost, "found"
+
+    for neighbor, edge_data in graph[current_node].items():
+        weight = float(edge_data.get('weight', 1.0))
+        new_cost = cost + weight
+        if new_cost < distances.get(neighbor, float('inf')):
+            distances[neighbor] = new_cost
+            parents[neighbor] = current_node
+            heapq.heappush(pq, (new_cost, neighbor))
+
+return None, float('inf'), "unreachable_or_limit"
+--- Landmark Preprocessing Functions ---
+def select_landmarks(graph, k):
+"""Selects k landmarks using degree-biased random sampling."""
+if not graph or graph.number_of_nodes() == 0:
+return []
+nodes = list(graph.nodes())
+degrees = [d for n, d in graph.degree(nodes)]
+total_degree = sum(degrees)
+if total_degree == 0:
+return random.sample(nodes, min(k, len(nodes)))
+
+probabilities = [d / total_degree for d in degrees]
+chosen = set()
+while len(chosen) < k and len(chosen) < len(nodes):
+    selected_nodes = random.choices(nodes, weights=probabilities, k=k - len(chosen))
+    chosen.update(selected_nodes)
+return list(chosen)
+def precompute_landmark_paths(graph, landmarks):
+"""Precomputes shortest paths between a subset of landmark pairs."""
+print("INFO: Starting landmark path precomputation...", file=sys.stderr)
+precomputed_paths = {}
+k = len(landmarks)
+subset_size = math.ceil(math.sqrt(k))
+
+expansion_limit = max(15000, int(math.sqrt(graph.number_of_nodes()) * 10))
+print(f"INFO: Using expansion limit of {expansion_limit} for precomputation.", file=sys.stderr)
+
+for i, lm1 in enumerate(landmarks):
+    for j in range(1, subset_size + 1):
+        lm2 = landmarks[(i + j) % k]
+        if lm1 == lm2 or (lm1, lm2) in precomputed_paths:
+            continue
+        
+        path, cost, reason = bounded_dijkstra(graph, lm1, lm2, max_expansions=expansion_limit, time_budget=0.5)
+        if reason == 'found':
+            precomputed_paths[(lm1, lm2)] = (path, cost)
+            precomputed_paths[(lm2, lm1)] = (path[::-1], cost)
+            
+print(f"INFO: Precomputation found {len(precomputed_paths)//2} inter-landmark paths.", file=sys.stderr)
+return precomputed_paths
+--- Query Processing Functions ---
+def get_query_pairs(query_file):
+"""Generator to yield (source, dest) pairs from the query file."""
+with open(query_file, 'r') as f:
+for line in f:
+parts = line.strip().split()
+if len(parts) != 2: continue
+try:
+yield (int(parts[0]), int(parts[1]))
+except ValueError:
+continue
+
+def process_small_graph_queries(G, queries_path, output_path):
+"""Process queries for small graphs using built-in bidirectional Dijkstra."""
+print("INFO: Processing queries on small graph using bidirectional Dijkstra.", file=sys.stderr)
+with (open(output_path, 'w') if output_path != "-" else sys.stdout) as out_f:
+for source, dest in get_query_pairs(queries_path):
+start_timer = time.monotonic()
+try:
+cost, path = nx.bidirectional_dijkstra(G, source, dest, weight='weight')
+path_str = ' -> '.join(map(str, path))
+output_line = f"Query {source} -> {dest} | Cost: {cost:.4f} | Time: {time.monotonic() - start_timer:.4f}s\n| Path: {path_str}\n"
+except nx.NetworkXNoPath:
+output_line = f"Query {source} -> {dest} | Cost: inf | Reason: No path exists.\n"
+except nx.NodeNotFound as e:
+output_line = f"Query {source} -> {dest} | Cost: inf | Reason: {e}\n"
+
+        out_f.write(output_line + "\n")
+def find_nearest_landmark(graph, node, landmarks):
+"""Finds the closest landmark to a given node using a bounded search."""
+expansion_limit = max(20000, int(math.sqrt(graph.number_of_nodes()) * 20))
+path, cost, reason = bounded_dijkstra(graph, start_node=node, targets=set(landmarks), max_expansions=expansion_limit)
+if path:
+return path, cost, path[-1]
+return None, float('inf'), None
+
+def stitch_path(p1, p2, p3):
+"""Stitches three path segments together, removing overlapping nodes."""
+if not p1 or not p2 or not p3: return None
+full_path = list(p1)
+if p2 and p2[0] == full_path[-1]:
+full_path.extend(p2[1:])
+else: return None
+
+if p3 and p3[0] == full_path[-1]:
+    full_path.extend(p3[1:])
+else: return None
+return full_path
+def get_path_cost(graph, path):
+"""Calculates the total weight of a path."""
+return sum(float(graph[u][v].get('weight', 1.0)) for u, v in zip(path[:-1], path[1:]))
+
+def query_path_landmarks(graph, landmarks, landmark_paths, source, dest):
+"""Handles a single query using the landmark strategy for normally-large graphs."""
+path_to_slm, _, source_lm = find_nearest_landmark(graph, source, landmarks)
+path_to_dlm, _, dest_lm = find_nearest_landmark(graph, dest, landmarks)
+
+if not source_lm or not dest_lm:
+    return {'cost': float('inf'), 'path': [], 'reason': "Could not reach a landmark."}
+
+inter_lm_path = None
+if source_lm == dest_lm:
+    inter_lm_path = [source_lm]
+elif (source_lm, dest_lm) in landmark_paths:
+    inter_lm_path, _ = landmark_paths[(source_lm, dest_lm)]
+else:
+    expansion_limit = max(20000, int(math.sqrt(graph.number_of_nodes()) * 20))
+    path, _, reason = bounded_dijkstra(graph, source_lm, dest_lm, max_expansions=expansion_limit)
+    if reason == 'found':
+        inter_lm_path = path
+
+if not inter_lm_path:
+    return {'cost': float('inf'), 'path': [], 'reason': "No path found between landmarks."}
+    
+full_path = stitch_path(path_to_slm, inter_lm_path, path_to_dlm[::-1])
+if full_path:
+    return {'cost': get_path_cost(graph, full_path), 'path': full_path}
+else:
+    return {'cost': float('inf'), 'path': [], 'reason': "Path stitching failed."}
+def process_large_graph_queries(G, landmarks, landmark_paths, queries_path, output_path, is_huge_graph):
+"""
+Process queries for large graphs. Uses different strategies based on graph completeness.
+"""
+strategy = "landmark routing" if not is_huge_graph else "unbounded search on unified subgraph"
+print(f"INFO: Processing queries on large graph using {strategy}.", file=sys.stderr)
+
+with (open(output_path, 'w') if output_path != "-" else sys.stdout) as out_f:
+    for source, dest in get_query_pairs(queries_path):
+        if source not in G or dest not in G:
+            output_line = f"Query {source} -> {dest} | Cost: inf | Reason: Node not in (potentially incomplete) graph.\n"
+            out_f.write(output_line)
+            continue
+        
+        # --- STRATEGY SELECTION FOR QUERY ---
+        if is_huge_graph:
+            # UNBOUNDED SEARCH on the partial graph
+            start_timer = time.monotonic()
+            try:
+                cost, path = nx.bidirectional_dijkstra(G, source, dest, weight='weight')
+                path_str = ' -> '.join(map(str, path))
+                output_line = f"Query {source} -> {dest} | Cost: {cost:.4f} | Time: {time.monotonic() - start_timer:.4f}s\n| Path: {path_str}\n"
+            except nx.NetworkXNoPath:
+                output_line = f"Query {source} -> {dest} | Cost: inf | Reason: No path exists in the loaded subgraph.\n"
+            out_f.write(output_line)
+        else:
+            # LANDMARK ROUTING on the complete graph
+            result = query_path_landmarks(G, landmarks, landmark_paths, source, dest)
+            cost = result['cost']
+            if cost != float('inf'):
+                path_str = ' -> '.join(map(str, result['path']))
+                output_line = f"Query {source} -> {dest} | Cost: {cost:.4f} | Path: {path_str}\n"
+            else:
+                reason = result.get('reason', 'N/A')
+                output_line = f"Query {source} -> {dest} | Cost: inf | Reason: {reason}\n"
+            out_f.write(output_line)
+--- Main Execution ---
+def main():
+global IS_SMALL_GRAPH
+parser = argparse.ArgumentParser(description="Pathfinder with Landmark Routing")
+parser.add_argument("-g", "--graph", required=True, help="Path to the node-link JSON graph file")
+parser.add_argument("-q", "--queries", required=False, help="Path to the queries file")
+parser.add_argument("-o", "--output", default="-", help="Output file path ('-' for stdout)")
+args = parser.parse_args()
+
+try:
+    signal.signal(signal.SIGALRM, deadline_handler)
+    signal.alarm(int(GLOBAL_DEADLINE_SECONDS))
+except AttributeError:
+    print("WARNING: signal.alarm not available on this OS.", file=sys.stderr)
+
+print(f"--- PREPROCESSING (Max {GLOBAL_DEADLINE_SECONDS}s) ---", file=sys.stderr)
+G, landmarks, landmark_paths = None, [], {}
+is_huge_graph = False
+
+try:
+    file_size = os.path.getsize(args.graph)
+    is_huge_graph = file_size > HUGE_GRAPH_THRESHOLD_BYTES
+    IS_SMALL_GRAPH = file_size <= SIZE_THRESHOLD_BYTES
+
+    if is_huge_graph:
+        print(f"INFO: Graph file is huge ({file_size / (1024*1024):.2f} MB). Using on-disk unified subgraph method.", file=sys.stderr)
+        # Build a unified subgraph of 500 landmarks.
+        G = build_unified_subgraph_on_disk(args.graph, num_landmarks_to_build=500)
+        IS_SMALL_GRAPH = False 
+
+    elif IS_SMALL_GRAPH:
+        print(f"INFO: Loading small graph ({file_size / (1024*1024):.2f} MB) into memory...", file=sys.stderr)
+        with open(args.graph, 'r') as f:
+            data = json.load(f)
+        G = nx.node_link_graph(data)
+    else: # Large, but not huge
+        print(f"INFO: Graph file is large ({file_size / (1024*1024):.2f} MB). Using streaming loader.", file=sys.stderr)
+        G = load_graph_streaming(args.graph)
+    
+    rss_after_load = psutil.Process(os.getpid()).memory_info().rss
+    print(f"INFO: Graph loaded. Current memory usage: {rss_after_load / (1<<20):.2f} MB", file=sys.stderr)
+    limit()
+    
+    if not IS_SMALL_GRAPH and not is_huge_graph:
+        # Only precompute landmark paths for normally-large, complete graphs
+        print(f"INFO: Large graph ({G.number_of_nodes()} nodes). Starting landmark selection.", file=sys.stderr)
+        k = math.ceil(math.sqrt(G.number_of_nodes())) if G.number_of_nodes() > 0 else 10
+        landmarks = select_landmarks(G, k)
+        landmark_paths = precompute_landmark_paths(G, landmarks)
+        limit()
+
+except (TimeoutInterrupt, Exception) as e:
+    if isinstance(e, TimeoutInterrupt):
+         print("INFO: Preprocessing stopped by deadline.", file=sys.stderr)
+    else:
+         print(f"ERROR during preprocessing: {e}", file=sys.stderr)
+    if G is None:
+        print("FATAL: No graph was loaded. Exiting.", file=sys.stderr)
+        return
+finally:
+    signal.alarm(0)
+    print(f"--- Preprocessing complete in {time.monotonic() - PROGRAM_START:.2f}s ---", file=sys.stderr)
+
+if G is not None:
+    print("\n--- QUERYING ---", file=sys.stderr)
+    if not args.queries:
+        args.queries = input("Enter the path to the queries file: ").strip()
+
+    if IS_SMALL_GRAPH:
+        process_small_graph_queries(G, args.queries, args.output)
+    else:
+        # Pass the is_huge_graph flag to the query processor
+        process_large_graph_queries(G, landmarks, landmark_paths, args.queries, args.output, is_huge_graph)
+
+print("\n--- Done ---", file=sys.stderr)
+if name == "main":
+main()
+
+
+Changes
+
+Added streaming node sampling and frontier expansion so huge graphs can be scanned incrementally into workable subgraphs without repeated full loads (new.py:62, new.py:112, new.py:171).
+Updated preprocessing flow to invoke the streaming subgraph builder for huge files while keeping the existing in-memory and landmark workflows for smaller graphs (new.py:495, new.py:519, new.py:546).
+Ensured large-graph querying chooses between partial-graph searches and landmark routing based on the new is_huge_graph flag (new.py:430).
+Tests
+
+python3 -m compileall new.py
+Next Steps
+
+Exercise the new streaming builder on a representative large dataset to tune target_node_budget (default 500) for your workload.
+it failed to find paths, it also failed to fill the subgraph.
+
+
+Streaming subgraph growth now anchors on the nodes your queries actually touch, so the huge-graph workflow brings in useful edges instead of leaving you with empty components.
+
+new.py:198 batches seed nodes (preferring query ids) through expand_subgraph_via_stream and falls back to a greedy fill pass (new.py:172) so the subgraph hits the requested budget even when early seeds are sparse.
+new.py:495 adds on-demand expansion during huge-graph query processing; if a query references nodes outside the current subgraph we rescan the JSON and grow the graph before attempting the path.
+new.py:595 and new.py:654 collect query nodes up front and again after prompting, enlarging the streaming budget when necessary and seeding another expansion pass so landmark/path routines work with those vertices.
+Tests
+
+python3 -m compileall new.py
+Next Steps
+
+Run a representative huge dataset and inspect the stderr logs to see how often the on-demand expansion triggers; adjust huge_graph_budget if you still hit “Node not in (partial) graph” responses.
+it works for 400 mb. but fails for 500.
+Continue to expand the subgraph of landmarks until the 60 seconds is up if its over 500 mb.
+Then after when searching for a path continue searching until a path is found or 10 seconds passes
+
+
+Expanded the “huge” workflow so anything above 500 MB keeps growing the streamed subgraph right up to the 60 s preprocessing deadline, using the existing graph plus fresh disk seeds instead of stopping at a fixed node budget (new.py:20, new.py:639, new.py:651). Queries on those partial graphs now loop for up to 10 s, alternating between bidirectional Dijkstra and incremental stream-expansions around the endpoints until a path is found or time expires (new.py:539). Both changes rely on the new tuning constants and per-query budget tracking added near the top of the file (new.py:20, new.py:507).
+
+Tests
+
+python3 -m compileall new.py
+Next Steps
+
+Run the 500 MB dataset and watch stderr: confirm the preprocessing loop keeps expanding until the alarm fires and that queries either find paths or report the 10 s timeout.
+add a wrteup of the code flow in the start with docstrings. Explain how the program works in simple easy to understand language
+
+
+Added a plain-language module docstring at the top of new.py that walks through the program flow—from parsing arguments to the different loading and query strategies—so the code’s behaviour is easy to grasp. Re-ran python3 -m compileall new.py to confirm the file still compiles.
+
+Next Steps
+
+Review the new overview and tweak wording if there’s more context you’d like captured.
+make a new file with a checker for viable paths.
+
+
+New Checker
+
+Added path_checker.py:1 with a walkthrough docstring and CLI that mirrors the solver’s small/large/huge strategies, including incremental streaming growth up to the preprocessing deadline for extreme (>500 MB) graphs.
+Implemented path verification routines that reuse bounded_dijkstra and on-demand streaming to keep expanding partial graphs until a route is found or the per-query 10 s budget expires (path_checker.py:120, path_checker.py:183).
+Report formatter now emits per-query verdicts plus an aggregate summary, writing either to stdout or a chosen file (path_checker.py:247).
+Tests
+
+python3 -m compileall path_checker.py
+Next Steps
+
+Run python3 path_checker.py -g <graph.json> -q <queries.txt> on your datasets to validate query coverage before executing the main solver.
+no, the checker has no need to stream. Load the entire json and just check if each connection exists and is a viable path
+
+
+Replaced path_checker.py with a simplified in-memory path verifier: it loads the entire node-link JSON, runs weighted Dijkstra per query, and reports whether a path exists along with cost and timing (path_checker.py:1). Removed all streaming and incremental growth logic, keeping only concise helpers for parsing queries, formatting results, and summarizing totals (path_checker.py:64, path_checker.py:116).
+
+Tests
+
+python3 -m compileall path_checker.py
+Next Steps
+
+Run python3 path_checker.py -g example_graph_large.json -q queries.txt (or your dataset) to confirm viability output meets expectations.
+to be clear. I have this output. and I want to make sure each is a real connection
+INFO: Processing queries on large graph using unbounded search on unified subgraph.
+Query 0 -> 5 | Cost: 275.0000 | Time: 0.0075s
+| Path: 0 -> 1924707 -> 1465505 -> 138858 -> 847367 -> 1415303 -> 318228 -> 1601536 -> 59500 -> 1337425 -> 1666300 -> 431195 -> 1046681 -> 153129 -> 1376584 -> 5
+Query 1 -> 4 | Cost: 300.0000 | Time: 0.0111s
+| Path: 1 -> 266 -> 1209228 -> 114827 -> 459909 -> 485963 -> 1690781 -> 924867 -> 1649011 -> 463378 -> 4
+Query 8 -> 6 | Cost: 334.0000 | Time: 0.0207s
+| Path: 8 -> 1782809 -> 1948872 -> 1523518 -> 603243 -> 274725 -> 171542 -> 527763 -> 911923 -> 736890 -> 6
+Query 9 -> 5 | Cost: 241.0000 | Time: 0.0109s
+| Path: 9 -> 59703 -> 106833 -> 40743 -> 1358797 -> 1176175 -> 945784 -> 77578 -> 295368 -> 1722246 -> 1389401 -> 5
+Query 3 -> 7 | Cost: 258.0000 | Time: 0.0240s
+| Path: 3 -> 1383522 -> 590684 -> 1263062 -> 1713167 -> 1899665 -> 125487 -> 574748 -> 1311182 -> 964461 -> 1779184 -> 7
+Query 4 -> 1 | Cost: 300.0000 | Time: 0.0129s
+| Path: 4 -> 463378 -> 1649011 -> 924867 -> 1690781 -> 485963 -> 459909 -> 114827 -> 1209228 -> 266 -> 1
+Query 7 -> 7 | Cost: 0.0000 | Time: 0.0000s
+| Path: 7
+Query 2 -> 100 | Cost: 380.0000 | Time: 0.0138s
+| Path: 2 -> 758714 -> 1457104 -> 752641 -> 70061 -> 1352219 -> 1956280 -> 623287 -> 1041727 -> 1720081 -> 929332 -> 561108 -> 100
+Query 512 -> 314 | Cost: 194.0000 | Time: 0.0037s
+| Path: 512 -> 1712100 -> 1701933 -> 148121 -> 922611 -> 1240004 -> 300856 -> 1361110 -> 513436 -> 1703470 -> 314
+Query 123 -> 124 | Cost: 169.0000 | Time: 0.0043s
+| Path: 123 -> 1943078 -> 1824336 -> 1148328 -> 113307 -> 1420959 -> 1199546 -> 19652 -> 621443 -> 307466 -> 667906 -> 1991506 -> 124
+
+
+Checker Update
+
+Reworked path_checker.py so it still loads the graph fully in memory, but now it can also take a solver report via --paths. For each listed route it walks the node sequence, confirms every edge exists, and re-sums the weights to ensure the advertised cost is correct (path_checker.py:108, path_checker.py:132).
+Maintained the original query-based viability checks (via --queries) and unified the output/summary formatting so both validation modes share the same report (path_checker.py:38, path_checker.py:221).
+Tests
+
+python3 -m compileall path_checker.py
+Usage
+
+Validate solver output: python3 path_checker.py -g example_graph_large.json -p solver_output.txt
+(Optional) Re-check queries directly: add -q queries.txt to run both validations in one pass.
