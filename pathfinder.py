@@ -20,6 +20,10 @@ and answers shortest-path queries. The high-level flow is:
 
 Every stage enforces a memory cap, emits progress on stderr, and reports
 clearly when a path cannot be found in the available time.
+
+How to run:
+import: networkx, ijson, psutil
+python pathfinder.py -g graph.json -q queries.txt -o results.txt
 """
 
 import argparse
